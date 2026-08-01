@@ -63,6 +63,14 @@ Rules:
 - Numeric identifiers used only as internal record keys (order_id, transaction_id, product_id) are NOT PII.
 - Company/organization names are NOT PII. FULL_NAME is for individual persons only.
 - Dates that are not a person's birth date (e.g. ship_date, created_at, order_date) are NOT PII.
+- sample_values are your primary evidence for what the column actually stores.
+  column_name is a hint, not proof -- do not classify based on the name alone
+  when sample values are present and legible.
+- When a column name describes a relationship or role rather than a data type
+  (e.g. "next_of_kin", "emergency_contact", "beneficiary", "referred_by"),
+  that name tells you WHO the value is relative to, not WHAT the value is.
+  Look at the sample values: if they are themselves a person's name, the
+  column is FULL_NAME regardless of what relationship its name implies.
 - If genuinely uncertain, lower the confidence rather than guessing high.
 
 Respond with strict JSON only:
