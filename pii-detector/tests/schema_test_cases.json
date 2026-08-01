@@ -1,0 +1,122 @@
+[
+  {
+    "input": {"table_name": "EMPLOYEES", "column_name": "next_of_kin", "data_type": "VARCHAR(120)", "sample_values": ["priya sharma", "daniel wu"], "nullable": true},
+    "expected": {"is_pii": true, "pii_category": "FULL_NAME"}
+  },
+  {
+    "input": {"table_name": "USERS", "column_name": "full_name", "data_type": "VARCHAR(120)", "sample_values": ["Jane Doe", "Mark Smith"], "nullable": false},
+    "expected": {"is_pii": true, "pii_category": "FULL_NAME"}
+  },
+  {
+    "input": {"table_name": "USERS", "column_name": "phone_number", "data_type": "VARCHAR(20)", "sample_values": ["+1-555-234-5678", "555-908-1122"], "nullable": true},
+    "expected": {"is_pii": true, "pii_category": "PHONE"}
+  },
+  {
+    "input": {"table_name": "EMPLOYEES", "column_name": "ssn", "data_type": "VARCHAR(11)", "sample_values": ["123-45-6789", "987-65-4321"], "nullable": false},
+    "expected": {"is_pii": true, "pii_category": "SSN"}
+  },
+  {
+    "input": {"table_name": "PAYMENTS", "column_name": "credit_card_number", "data_type": "VARCHAR(20)", "sample_values": ["4111 1111 1111 1111"], "nullable": false},
+    "expected": {"is_pii": true, "pii_category": "CREDIT_CARD"}
+  },
+  {
+    "input": {"table_name": "PAYMENTS", "column_name": "card_no", "data_type": "VARCHAR(20)", "sample_values": ["****-****-****-1234", "null"], "nullable": true},
+    "expected": {"is_pii": true, "pii_category": "CREDIT_CARD"}
+  },
+  {
+    "input": {"table_name": "CUSTOMERS", "column_name": "cust_acct_no", "data_type": "VARCHAR(20)", "sample_values": ["****1234", "ACC-98765", "null"], "nullable": false},
+    "expected": {"is_pii": true, "pii_category": "ACCOUNT_NUMBER"}
+  },
+  {
+    "input": {"table_name": "CUSTOMERS", "column_name": "dob", "data_type": "DATE", "sample_values": ["1985-03-12", "1990-11-02"], "nullable": true},
+    "expected": {"is_pii": true, "pii_category": "DATE_OF_BIRTH"}
+  },
+  {
+    "input": {"table_name": "CUSTOMERS", "column_name": "home_address", "data_type": "VARCHAR(200)", "sample_values": ["221B Baker Street", "42 Wallaby Way, Sydney"], "nullable": true},
+    "expected": {"is_pii": true, "pii_category": "ADDRESS"}
+  },
+  {
+    "input": {"table_name": "SERVERS", "column_name": "client_ip", "data_type": "VARCHAR(45)", "sample_values": ["192.168.1.10", "10.0.0.5"], "nullable": false},
+    "expected": {"is_pii": true, "pii_category": "IP_ADDRESS"}
+  },
+  {
+    "input": {"table_name": "CITIZENS", "column_name": "national_insurance_number", "data_type": "VARCHAR(15)", "sample_values": ["AB123456C", "QQ654321D"], "nullable": false},
+    "expected": {"is_pii": true, "pii_category": "NATIONAL_ID"}
+  },
+  {
+    "input": {"table_name": "CONTACTS", "column_name": "telefono", "data_type": "VARCHAR(20)", "sample_values": ["+34 611 22 33 44", "+34 622 33 44 55"], "nullable": true},
+    "expected": {"is_pii": true, "pii_category": "PHONE"}
+  },
+  {
+    "input": {"table_name": "CONTACTS", "column_name": "nome_completo", "data_type": "VARCHAR(120)", "sample_values": ["Mario Rossi", "Giulia Bianchi"], "nullable": false},
+    "expected": {"is_pii": true, "pii_category": "FULL_NAME"}
+  },
+  {
+    "input": {"table_name": "STAGING", "column_name": "fld_23", "data_type": "VARCHAR(255)", "sample_values": ["user@example.com", "another.user@corp.io"], "nullable": true},
+    "expected": {"is_pii": true, "pii_category": "EMAIL"}
+  },
+  {
+    "input": {"table_name": "ACCOUNTS", "column_name": "acct_number", "data_type": "VARCHAR(20)", "sample_values": ["****1234", "null"], "nullable": true},
+    "expected": {"is_pii": true, "pii_category": "ACCOUNT_NUMBER"}
+  },
+  {
+    "input": {"table_name": "ORDERS", "column_name": "transaction_id", "data_type": "BIGINT", "sample_values": ["100001", "100002"], "nullable": false},
+    "expected": {"is_pii": false, "pii_category": null}
+  },
+  {
+    "input": {"table_name": "ORDERS", "column_name": "order_date", "data_type": "DATE", "sample_values": ["2026-05-01", "2026-05-03"], "nullable": false},
+    "expected": {"is_pii": false, "pii_category": null}
+  },
+  {
+    "input": {"table_name": "PRODUCTS", "column_name": "company_name", "data_type": "VARCHAR(120)", "sample_values": ["Acme Corp", "Globex Inc"], "nullable": true},
+    "expected": {"is_pii": false, "pii_category": null}
+  },
+  {
+    "input": {"table_name": "INVENTORY", "column_name": "quantity", "data_type": "INT", "sample_values": ["42", "7"], "nullable": false},
+    "expected": {"is_pii": false, "pii_category": null}
+  },
+  {
+    "input": {"table_name": "PRODUCTS", "column_name": "price", "data_type": "DECIMAL(10,2)", "sample_values": ["19.99", "5.49"], "nullable": false},
+    "expected": {"is_pii": false, "pii_category": null}
+  },
+  {
+    "input": {"table_name": "ORDERS", "column_name": "status", "data_type": "VARCHAR(20)", "sample_values": ["SHIPPED", "PENDING"], "nullable": false},
+    "expected": {"is_pii": false, "pii_category": null}
+  },
+  {
+    "input": {"table_name": "PRODUCTS", "column_name": "sku", "data_type": "VARCHAR(20)", "sample_values": ["SKU-1234", "SKU-5678"], "nullable": false},
+    "expected": {"is_pii": false, "pii_category": null}
+  },
+  {
+    "input": {"table_name": "LOGS", "column_name": "created_at", "data_type": "TIMESTAMP", "sample_values": ["2026-01-01T00:00:00Z"], "nullable": false},
+    "expected": {"is_pii": false, "pii_category": null}
+  },
+  {
+    "input": {"table_name": "LOGS", "column_name": "updated_at", "data_type": "TIMESTAMP", "sample_values": ["2026-01-02T00:00:00Z"], "nullable": false},
+    "expected": {"is_pii": false, "pii_category": null}
+  },
+  {
+    "input": {"table_name": "CONTRACTS", "column_name": "ref_code", "data_type": "VARCHAR(20)", "sample_values": ["C-2024-001"], "nullable": true},
+    "expected": {"is_pii": false, "pii_category": null}
+  },
+  {
+    "input": {"table_name": "PRODUCTS", "column_name": "description", "data_type": "TEXT", "sample_values": ["Blue widget, 4-pack"], "nullable": true},
+    "expected": {"is_pii": false, "pii_category": null}
+  },
+  {
+    "input": {"table_name": "SHIPMENTS", "column_name": "ship_date", "data_type": "DATE", "sample_values": ["2026-06-01"], "nullable": false},
+    "expected": {"is_pii": false, "pii_category": null}
+  },
+  {
+    "input": {"table_name": "ORDERS", "column_name": "currency", "data_type": "VARCHAR(3)", "sample_values": ["USD", "EUR"], "nullable": false},
+    "expected": {"is_pii": false, "pii_category": null}
+  },
+  {
+    "input": {"table_name": "INVENTORY", "column_name": "warehouse_region", "data_type": "VARCHAR(20)", "sample_values": ["US-WEST", "EU-CENTRAL"], "nullable": false},
+    "expected": {"is_pii": false, "pii_category": null}
+  },
+  {
+    "input": {"table_name": "SESSIONS", "column_name": "session_id", "data_type": "VARCHAR(64)", "sample_values": ["sess_abc123xyz"], "nullable": false},
+    "expected": {"is_pii": false, "pii_category": null}
+  }
+]
