@@ -47,7 +47,9 @@ def test_recall_on_golden_set():
     detected = sum(1 for c in pii_cases
                    if detector.detect(c["input"])["is_pii"])
     recall = detected / len(pii_cases)
-    assert recall >= 0.80, f"Recall {recall:.2f} below threshold"
+    # QUALITY_CRITERIA.md targets >= 0.90 (the JD's own template test only
+    # asserted >= 0.80) -- raised to actually gate on our stated target.
+    assert recall >= 0.90, f"Recall {recall:.2f} below threshold"
 
 
 def test_precision_on_golden_set():
