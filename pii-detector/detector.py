@@ -45,6 +45,7 @@ from pii_patterns import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from audit_logger import AuditLogger  # noqa: E402
+from llm_cache import LlmCache, make_cache_key  # noqa: E402
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -112,6 +113,7 @@ class PiiDetector:
         model: str = CLASSIFIER_MODEL,
         client: "ollama.Client | None" = None,
         audit_logger: Optional[AuditLogger] = None,
+        llm_cache: Optional[LlmCache] = None,
     ):
         self.model = model
         self.client = client or ollama
@@ -120,6 +122,10 @@ class PiiDetector:
         # wasn't actually true until this got wired in. Pass a custom
         # AuditLogger(db_path=...) to point at a scratch DB in tests.
         self.audit_logger = audit_logger or AuditLogger()
+        # Exact-match cache for _llm_classify -- safe because that call is
+        # already temperature=0 (meant to be deterministic per input), so
+        # caching is a pure cost/latency win, not a behavior change.
+        self.llm_cache = llm_cache or LlmCache()
 
     # -- Layer 1 --------------------------------------------------------
     def _score_rule_layer(self, column: dict):
@@ -138,10 +144,25 @@ class PiiDetector:
 
     # -- Layer 2 ----------------------------------------------------------
     def _llm_classify(self, column: dict, rule_category: Optional[str]) -> dict:
+        # column.get('data_type', ...) not column['data_type'] -- a caller
+        # (the upcoming agent's single-column query tool, e.g.) may only
+        # have a table/column name and nothing else to go on.
+        cache_key = make_cache_key(
+            self.model,
+            column_name=column["column_name"],
+            data_type=column.get("data_type"),
+            sample_values=column.get("sample_values", []),
+            nullable=column.get("nullable"),
+            rule_layer_opinion=rule_category or "none",
+        )
+        cached = self.llm_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         user_prompt = (
             f"table_name: {column['table_name']}\n"
             f"column_name: {column['column_name']}\n"
-            f"data_type: {column['data_type']}\n"
+            f"data_type: {column.get('data_type', 'UNKNOWN')}\n"
             f"sample_values: {column.get('sample_values', [])}\n"
             f"nullable: {column.get('nullable')}\n"
             f"rule_layer_opinion: {rule_category or 'none'}\n"
@@ -157,14 +178,18 @@ class PiiDetector:
                 ],
             )
             parsed = json.loads(response["message"]["content"])
-            return {
+            result = {
                 "is_pii": bool(parsed.get("is_pii", False)),
                 "pii_category": parsed.get("pii_category"),
                 "confidence": float(parsed.get("confidence", 0.5)),
                 "reasoning": parsed.get("reasoning", ""),
                 "suggested_rule_keyword": parsed.get("suggested_rule_keyword"),
             }
+            self.llm_cache.put(cache_key, self.model, result)
+            return result
         except Exception as exc:  # model unreachable, malformed JSON, etc.
+            # Never cached -- an outage fallback must not haunt future
+            # calls once the model is reachable again.
             return {
                 "is_pii": False,
                 "pii_category": None,

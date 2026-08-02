@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 import pii_patterns
 from detector import PiiDetector
+from llm_cache import LlmCache
+from audit_logger import AuditLogger
 
 detector = PiiDetector()
 
@@ -94,3 +96,39 @@ def test_empty_overlay_is_a_no_op(tmp_path, monkeypatch):
     assert pii_patterns.get_promoted_keywords() == {}
     # a known base-dict keyword still matches with no overlay present
     assert pii_patterns.name_matches("email_address", "EMAIL") is True
+
+
+class _CountingFakeClient:
+    """Stands in for ollama.Client -- returns a fixed valid response and
+    counts how many times .chat() was actually invoked, so the cache test
+    below can assert the second identical call never reaches this client.
+    """
+    def __init__(self):
+        self.calls = 0
+
+    def chat(self, **kwargs):
+        self.calls += 1
+        return {"message": {"content": json.dumps({
+            "is_pii": True, "pii_category": "EMAIL", "confidence": 0.9,
+            "reasoning": "fake response for cache test", "suggested_rule_keyword": None,
+        })}}
+
+
+def test_identical_llm_call_is_served_from_cache(tmp_path):
+    """Tier 1 caching: _llm_classify is temperature=0 (meant to be
+    deterministic per input), so a repeated identical column must not
+    re-invoke the client -- pure cost/latency win, not a behavior change.
+    """
+    fake_client = _CountingFakeClient()
+    cache = LlmCache(db_path=tmp_path / "test_llm_cache.db")
+    audit = AuditLogger(db_path=tmp_path / "test_audit.db")
+    d = PiiDetector(client=fake_client, llm_cache=cache, audit_logger=audit)
+    col = {"table_name": "CONTACTS", "column_name": "elektropost", "data_type": "VARCHAR(120)",
+           "sample_values": ["someone at example dot com"], "nullable": True}
+
+    r1 = d.detect(col)
+    assert fake_client.calls == 1
+
+    r2 = d.detect(col)
+    assert fake_client.calls == 1, "second identical call must be served from cache, not the client"
+    assert r1 == r2
