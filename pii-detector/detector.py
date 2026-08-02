@@ -4,23 +4,27 @@ Layer 2 is only called when Layer 1 is inconclusive -- see _score_rule_layer
 for exactly what "inconclusive" means. This keeps LLM cost proportional to
 schema ambiguity, not schema size (SCALABILITY.md).
 
-Confidence blending, in precedence order (see README.md / conversation log
-for the reasoning behind each case -- this table is the spec, not an
-afterthought):
+Confidence blending, in precedence order -- this table is the spec, not an
+afterthought. _blend() has exactly four branches (3a-3d); cases 1 and 2
+below resolve before _blend is ever called:
 
   1. Rule score >= 0.90 (name AND sample both match)        -> skip LLM.
   2. No rule match, name is a known-safe operational field   -> skip LLM, not PII, 0.95.
-  3. Escalated to LLM:
+  3. Escalated to LLM, inside _blend():
      a. Rule has a category, LLM agrees                      -> 0.3*rule + 0.7*llm
      b. No rule category, LLM says PII                       -> min(llm, 0.85)   [capped: no corroboration]
      c. Rule has a category, LLM disagrees (or says not-PII) -> True, min(llm_or_rule, 0.70) [conflict -> always review]
-     d. No rule category, LLM says not-PII, conf >= 0.60     -> not PII, llm confidence as-is
-     e. No rule category, LLM says not-PII, conf < 0.60      -> not PII, but review_required=True anyway
+     d. No rule category, LLM says not-PII                   -> not PII, llm confidence as-is
 
-Cases (c) and (e) are deliberate extensions past the literal JSON contract,
-in the direction QUALITY_CRITERIA.md's recall/precision asymmetry demands:
-disagreement never silently resolves to "not PII", and an ungrounded
-low-confidence "not PII" doesn't get to hide either.
+review_required for case (d) is NOT decided inside _blend -- it's a separate
+threshold check in detect() (confidence < NEGATIVE_REVIEW_FLOOR, 0.60). One
+branch, two possible downstream outcomes, not two separate blend cases.
+
+Case (c) and case (d)'s downstream review check are deliberate extensions
+past the literal JSON contract, in the direction QUALITY_CRITERIA.md's
+recall/precision asymmetry demands: disagreement never silently resolves to
+"not PII", and an ungrounded low-confidence "not PII" doesn't get to hide
+either.
 """
 import json
 import os
@@ -95,6 +99,11 @@ class DetectionResult:
     recommended_masking_function: Optional[str]
     review_required: bool
     reasoning: str = ""
+    # Only ever set when rule and LLM layers disagreed on category (blend
+    # case 3c, LLM-is-PII sub-case) -- the losing side of a real conflict,
+    # not a fabricated guess. None everywhere else, including the JD's own
+    # test fixture, which never passes this field.
+    alternative_category: Optional[str] = None
 
 
 class PiiDetector:
@@ -165,9 +174,13 @@ class PiiDetector:
             }
 
     def _blend(self, rule_category, rule_score, llm: dict):
-        """Returns (is_pii, category, confidence, reasoning, suggested_rule_keyword).
+        """Returns (is_pii, category, confidence, reasoning, suggested_rule_keyword, alternative_category).
         The keyword is only ever non-null when llm_is_pii -- see the prompt's
         own instruction not to propose rules off a negative classification.
+        alternative_category is only ever non-null in case 3c's LLM-is-PII
+        sub-case, where rule_category is a real, evidence-backed second
+        opinion, not a guess -- see masking-generator/generator.py, the only
+        consumer of this field.
         """
         llm_is_pii = llm["is_pii"]
         llm_category = llm["pii_category"]
@@ -177,12 +190,12 @@ class PiiDetector:
         # Case 3a: rule has a category, LLM agrees
         if rule_category and llm_is_pii and llm_category == rule_category:
             confidence = round(0.30 * rule_score + 0.70 * llm_confidence, 2)
-            return True, rule_category, confidence, llm["reasoning"], suggested_keyword
+            return True, rule_category, confidence, llm["reasoning"], suggested_keyword, None
 
         # Case 3b: no rule category, LLM says PII -- capped, no corroboration
         if not rule_category and llm_is_pii:
             confidence = round(min(llm_confidence, NO_CORROBORATION_CAP), 2)
-            return True, llm_category, confidence, llm["reasoning"], suggested_keyword
+            return True, llm_category, confidence, llm["reasoning"], suggested_keyword, None
 
         # Case 3c: rule has a category, LLM disagrees (category or is_pii) -- conflict, never silently clears
         if rule_category and (not llm_is_pii or llm_category != rule_category):
@@ -192,19 +205,22 @@ class PiiDetector:
                     f"Rule layer suggested {rule_category}, LLM suggested {llm_category}; "
                     f"conflicting signals, routed to review. {llm['reasoning']}"
                 )
-                return True, llm_category, confidence, reasoning, suggested_keyword
+                return True, llm_category, confidence, reasoning, suggested_keyword, rule_category
             confidence = round(min(rule_score, CONFLICT_CAP), 2)
             reasoning = (
                 f"Rule layer matched {rule_category} but LLM disagreed; "
                 f"routed to review pending human judgement. {llm['reasoning']}"
             )
-            return True, rule_category, confidence, reasoning, None
+            return True, rule_category, confidence, reasoning, None, None
 
-        # Case 3d/3e: no rule category, LLM says not-PII
-        return False, None, round(llm_confidence, 2), llm["reasoning"], None
+        # Case 3d: no rule category, LLM says not-PII. Whether this ends up
+        # requiring review is decided by detect()'s NEGATIVE_REVIEW_FLOOR
+        # check, not here -- this branch always just passes llm_confidence through.
+        return False, None, round(llm_confidence, 2), llm["reasoning"], None, None
 
     def detect(self, column: dict) -> dict:
         rule_category, rule_score = self._score_rule_layer(column)
+        alternative_category = None
 
         if rule_category and rule_score >= RULE_ALONE_THRESHOLD:
             is_pii, category, confidence, reasoning, source, suggested_keyword = (
@@ -220,7 +236,7 @@ class PiiDetector:
             )
         else:
             llm_result = self._llm_classify(column, rule_category)
-            is_pii, category, confidence, reasoning, suggested_keyword = self._blend(rule_category, rule_score, llm_result)
+            is_pii, category, confidence, reasoning, suggested_keyword, alternative_category = self._blend(rule_category, rule_score, llm_result)
             source = "llm_blend"
 
         if is_pii:
@@ -250,6 +266,7 @@ class PiiDetector:
             "recommended_masking_function": masking_function,
             "review_required": review_required,
             "reasoning": reasoning,
+            "alternative_category": alternative_category,
         }
 
     def detect_all(self, schema: list[dict]) -> list[DetectionResult]:
@@ -265,5 +282,6 @@ class PiiDetector:
                 recommended_masking_function=r["recommended_masking_function"],
                 review_required=r["review_required"],
                 reasoning=r["reasoning"],
+                alternative_category=r["alternative_category"],
             ))
         return results
