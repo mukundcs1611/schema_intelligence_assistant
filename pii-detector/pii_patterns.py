@@ -12,6 +12,9 @@ Nothing here calls an LLM or does anything probabilistic -- every function is
 pure and auditable, which is the point of Layer 1.
 """
 import re
+from pathlib import Path
+
+import yaml
 
 MASKING_FUNCTION_MAP = {
     "FULL_NAME": "NAME_RANDOMIZE",
@@ -99,6 +102,35 @@ VALUE_PATTERNS = {
 # but fails Luhn is very unlikely to actually be a card number.
 CHECKSUM_CATEGORIES = {"CREDIT_CARD"}
 
+# Human-approved keywords, promoted from LLM suggestions via promote_rules.py.
+# Merged on top of POSITIVE_NAME_KEYWORDS in name_matches() -- this dict
+# above is never edited by the promotion flow, only read alongside it.
+PROMOTED_RULES_PATH = Path(__file__).resolve().parent / "promoted_rules.yaml"
+_promoted_cache = {"mtime": None, "data": {}}
+
+
+def get_promoted_keywords(path: Path = None) -> dict:
+    """Re-parses only if the file's mtime changed since the last call, so
+    this is cheap enough to call on every name_matches() -- no explicit
+    reload needed, an approval in promote_rules.py is picked up by the very
+    next detect() call.
+
+    path defaults to the live PROMOTED_RULES_PATH module global, resolved
+    at call time rather than bound at import time -- lets tests monkeypatch
+    PROMOTED_RULES_PATH to point at a temp file without needing to also
+    reload this function's signature.
+    """
+    path = path or PROMOTED_RULES_PATH
+    try:
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        return {}
+    if mtime != _promoted_cache["mtime"]:
+        with open(path) as f:
+            _promoted_cache["data"] = yaml.safe_load(f) or {}
+        _promoted_cache["mtime"] = mtime
+    return _promoted_cache["data"]
+
 
 def tokenize(column_name: str) -> list[str]:
     return [t for t in re.split(r"[^a-zA-Z0-9]+", column_name.lower()) if t]
@@ -114,7 +146,7 @@ def name_matches(column_name: str, category: str) -> bool:
     token_list = tokenize(column_name)
     token_set = set(token_list)
     joined = "_".join(token_list)
-    keywords = POSITIVE_NAME_KEYWORDS.get(category, [])
+    keywords = POSITIVE_NAME_KEYWORDS.get(category, []) + get_promoted_keywords().get(category, [])
     if not any(kw in token_set or kw in joined for kw in keywords):
         return False
     negatives = NEGATIVE_NAME_KEYWORDS.get(category, [])

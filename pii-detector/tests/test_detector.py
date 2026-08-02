@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 import pytest
+import pii_patterns
 from detector import PiiDetector
 
 detector = PiiDetector()
@@ -65,3 +66,31 @@ def test_precision_on_golden_set():
     correct = sum(1 for c in predicted_positive if c["expected"]["is_pii"])
     precision = correct / len(predicted_positive)
     assert precision >= 0.70, f"Precision {precision:.2f} below threshold"
+
+
+def test_promoted_keyword_extends_match(tmp_path, monkeypatch):
+    """A keyword with no base-dictionary entry doesn't match until it's
+    promoted -- then it does, on the very next call, no reload needed.
+    """
+    yaml_path = tmp_path / "promoted_rules.yaml"
+    yaml_path.write_text("ACCOUNT_NUMBER:\n  - routing_num\n")
+
+    assert pii_patterns.name_matches("routing_num", "ACCOUNT_NUMBER") is False
+
+    monkeypatch.setattr(pii_patterns, "PROMOTED_RULES_PATH", yaml_path)
+    monkeypatch.setattr(pii_patterns, "_promoted_cache", {"mtime": None, "data": {}})
+
+    assert pii_patterns.name_matches("routing_num", "ACCOUNT_NUMBER") is True
+
+
+def test_empty_overlay_is_a_no_op(tmp_path, monkeypatch):
+    """A missing or empty promoted_rules.yaml must not change base-dict
+    behavior -- regression guard, since this file ships empty by default.
+    """
+    missing_path = tmp_path / "does_not_exist.yaml"
+    monkeypatch.setattr(pii_patterns, "PROMOTED_RULES_PATH", missing_path)
+    monkeypatch.setattr(pii_patterns, "_promoted_cache", {"mtime": None, "data": {}})
+
+    assert pii_patterns.get_promoted_keywords() == {}
+    # a known base-dict keyword still matches with no overlay present
+    assert pii_patterns.name_matches("email_address", "EMAIL") is True
