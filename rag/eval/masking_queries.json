@@ -1,0 +1,62 @@
+[
+  {
+    "query_id": "q1",
+    "query": "What does DATE_SHIFT do and what parameters does it accept?",
+    "expected_source_document": "date_shift.md",
+    "query_type": "near_title"
+  },
+  {
+    "query_id": "q2",
+    "query": "How do I comply with GDPR when masking customer data?",
+    "expected_source_document": "gdpr_ccpa_compliance.md",
+    "query_type": "near_title"
+  },
+  {
+    "query_id": "q3",
+    "query": "How do I anonymize a customer's mailing address?",
+    "expected_source_document": "address_ip_national_id_mask.md",
+    "query_type": "vocab_divergent"
+  },
+  {
+    "query_id": "q4",
+    "query": "What parameters does EMAIL_MASK accept?",
+    "expected_source_document": "email_mask.md",
+    "query_type": "near_title"
+  },
+  {
+    "query_id": "q5",
+    "query": "My masking job says a column needs review and won't run -- what's going on?",
+    "expected_source_document": "masking_troubleshooting.md",
+    "query_type": "vocab_divergent"
+  },
+  {
+    "query_id": "q6",
+    "query": "How can I make masking run faster on a table with hundreds of millions of rows?",
+    "expected_source_document": "masking_performance_tuning.md",
+    "query_type": "vocab_divergent"
+  },
+  {
+    "query_id": "q7",
+    "query": "Which masking function should I use for a Social Security Number column?",
+    "expected_source_document": "phone_ssn_mask.md",
+    "query_type": "near_title"
+  },
+  {
+    "query_id": "q8",
+    "query": "How do I schedule a masking job to run automatically every night?",
+    "expected_source_document": "configuring_masking_jobs.md",
+    "query_type": "vocab_divergent"
+  },
+  {
+    "query_id": "q9",
+    "query": "Does masking preserve the checksum validity of credit card numbers?",
+    "expected_source_document": "credit_card_account_mask.md",
+    "query_type": "vocab_divergent"
+  },
+  {
+    "query_id": "q10",
+    "query": "What replacement values get used when masking a person's name?",
+    "expected_source_document": "name_randomize.md",
+    "query_type": "vocab_divergent"
+  }
+]
