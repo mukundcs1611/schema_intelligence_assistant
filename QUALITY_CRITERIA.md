@@ -22,16 +22,41 @@ Optimise for recall. Accept lower precision.
 
 ### Confidence Thresholds
 
+**Revised 2026-08-02.** Building the rule+LLM blending logic in Day 1B
+surfaced that `is_pii` is decided first, from rule-layer and LLM signals —
+confidence is never what flips a column between PII and not-PII. The
+original table below assumed one continuous scale doing both jobs at once;
+that isn't how the implementation works, so it's superseded rather than
+left to mislead. Two independent questions get asked, each with its own
+threshold:
+
+| Detector decided | Confidence check | Reasoning |
+|---|---|---|
+| PII | ≥ 0.80 → auto-configure, else → review queue | High enough signal to act without human review; below it, always reviewed, no floor where it silently drops |
+| Not PII | ≥ 0.60 → accepted as-is, else → review queue anyway | An ungrounded low-confidence "not PII" call (no rule-layer opinion to cross-check it) doesn't get to hide either |
+
+**Default auto-configure threshold: 0.80. Tunable per customer deployment via configuration.**
+
+Any column the detector flags as PII with confidence below 0.80
+goes to the review queue — it is never silently dropped.
+
+<details>
+<summary>Superseded: original pre-implementation model (single scale)</summary>
+
 | Confidence | Decision | Reasoning |
 |---|---|---|
 | ≥ 0.80 | Auto-configure | High enough signal to act without human review |
 | 0.40 – 0.79 | Review queue | Uncertain — human decides |
 | < 0.40 | Not PII | Insufficient evidence from both rule layer and LLM |
 
-**Default threshold: 0.80. Tunable per customer deployment via configuration.**
+This assumed a single confidence scale spanning both PII and not-PII
+outcomes, with low confidence eventually flipping a column to "Not PII".
+The actual implementation never does this -- `is_pii` is a categorical
+decision made before confidence is checked at all. Kept here, struck
+through in spirit, for the record -- see the revised table above for what's
+actually implemented.
 
-Any column the detector flags as PII with confidence below 0.80
-goes to the review queue — it is never silently dropped.
+</details>
 
 ### Threshold as a Failure Signal
 
@@ -59,7 +84,6 @@ A 30-column labelled dataset created before implementation.
 **Composition:**
 - 15 PII columns / 15 non-PII columns
 - Covers ≥ 8 of the 10 required PII categories
-- Three difficulty tiers
 
 **Mandatory edge cases — the detector must handle these:**
 
@@ -133,9 +157,19 @@ is the stable interface across all versions. Every component behind
 it is replaceable. Every decision is logged to audit storage.
 
 The system is designed for n+1 iterations:
-- New PII categories added via configuration, not code changes
+- Existing categories' keyword coverage grows from PS team corrections
+  through a human-reviewed promotion step: the LLM's suggested keywords
+  are logged to the audit trail, a reviewer approves them, and approved
+  keywords load from a supplementary config file at startup -- not fully
+  automatic (an unreviewed LLM suggestion never silently becomes a trusted
+  rule), and not a redeploy either.
+- New PII categories require a code change, by design. A new category
+  needs a real masking function and real documentation, and neither of
+  those is something a config file can generate. "Configuration, not
+  code" applies to extending keyword coverage on known categories -- it
+  was never a promise that inventing new categories stays config-only,
+  and that distinction was blurred in an earlier draft of this document.
 - Confidence threshold tunable per customer deployment
-- Rule base grows from PS team corrections without redeployment
 - Model swappable via environment variable
 
 Targets in this document apply to v1. They will be revised
