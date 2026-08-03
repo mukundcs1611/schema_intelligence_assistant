@@ -1,6 +1,6 @@
 # PII Detector — Evaluation Report
 
-Generated: 2026-08-01, from a live run of `detector.py` against `schema_test_cases.json` (30 cases). `test_recall_on_golden_set` and `test_precision_on_golden_set` in `test_detector.py` assert these same thresholds on every test run, so these numbers stay honest even without a report-generation script.
+Generated: 2026-08-03, from a live run of `detector.py` against `schema_test_cases.json` (30 cases). `test_recall_on_golden_set` and `test_precision_on_golden_set` in `test_detector.py` assert these same thresholds on every test run, so those two numbers stay honest even without a report-generation script. The others in the table below are hand-measured and are only as current as the date above — an earlier revision of this report claimed an auto-configuration rate of 1.00 that had already drifted to 0.93, which is exactly the failure mode a hand-maintained report invites.
 
 ## Golden Set
 
@@ -16,11 +16,17 @@ Generated: 2026-08-01, from a live run of `detector.py` against `schema_test_cas
 | Metric | Target | Measured | Result |
 |---|---|---|---|
 | Recall | ≥ 0.90 | 1.00 | PASS |
-| Precision | ≥ 0.70 | 0.75 | PASS |
-| Auto-config rate (among true positives) | ≥ 0.80 | 1.00 | PASS |
+| Precision | ≥ 0.70 | 0.79 | PASS |
+| Auto-config rate (among true positives) | ≥ 0.80 | 0.93 | PASS |
 | Category accuracy (among true positives) | — | 1.00 | — |
 
-Confusion counts: TP=15 FP=5 FN=0 TN=10
+Confusion counts: TP=15 FP=4 FN=0 TN=11
+
+The one true positive not auto-configured is `CUSTOMERS.home_address`: the
+rule layer matched ADDRESS, the LLM disagreed, and blend case 3c caps a
+rule/LLM conflict at 0.70 precisely so disagreement can never auto-configure.
+It stays `is_pii=true` — recall is unaffected — and lands in the review queue,
+which is the intended behaviour rather than a miss.
 
 ## Fixed During Evaluation
 
@@ -79,21 +85,42 @@ the prompt is now part of the key. This did not affect the fix above -- the
 test column happened not to be cached -- but it would have made the next
 prompt change appear to do nothing.
 
+**Short keywords matching inside longer words.** `name_matches` tested every
+keyword as a substring of the underscore-joined column name — necessary for
+compound terms like `date_of_birth`, but it also fired `"pan"` (Primary
+Account Number) inside `com-PAN-y` and `"ip"` inside `descr-IP-tion` and
+`sh-IP_date`, producing three of the five false positives. Single-word
+keywords now require a whole-token match; multi-word keywords keep substring
+matching. Measured before changing anything: the new rule flips exactly those
+three columns and nothing else in the golden set. Precision 0.75 -> 0.79,
+false positives 5 -> 4, Layer 1 resolution 70% -> 73%.
+
+The trade-off is agglutinative names where the term is fused into a longer
+word (German `nachname`, Indonesian `nomor_telepon`). Those now fall through
+to the LLM on sample evidence and surface as rule-promotion candidates —
+which is the designed path for a real dictionary gap, rather than relying on
+a coincidental character match.
+
 ## Errors
 
 **False negatives:** none in this run.
 
 **False positives (routed to review queue, not silently wrong):**
 
-- `ORDERS.order_date` — flagged PHONE (confidence 0.55), expected non-PII. Reasoning: Rule layer matched PHONE but LLM disagreed; routed to review pending human judgement. The column name and data content do not indicate personal information.
-- `PRODUCTS.company_name` — flagged CREDIT_CARD (confidence 0.6), expected non-PII. Reasoning: Rule layer matched CREDIT_CARD but LLM disagreed; routed to review pending human judgement. Company names are not PII.
-- `PRODUCTS.sku` — flagged ACCOUNT_NUMBER (confidence 0.55), expected non-PII. Reasoning: Rule layer matched ACCOUNT_NUMBER but LLM disagreed; routed to review pending human judgement. SKU is an identifier for products, not individuals.
-- `PRODUCTS.description` — flagged IP_ADDRESS (confidence 0.6), expected non-PII. Reasoning: Rule layer matched IP_ADDRESS but LLM disagreed; routed to review pending human judgement. Column name 'description' does not indicate any PII.
-- `SHIPMENTS.ship_date` — flagged IP_ADDRESS (confidence 0.6), expected non-PII. Reasoning: Rule layer matched IP_ADDRESS but LLM disagreed; routed to review pending human judgement. The column name 'ship_date' indicates a date related to shipment, not a person's birth date.
+- `ORDERS.order_date` — flagged PHONE (0.55). The PHONE value regex accepts a date-shaped digit/hyphen string.
+- `PRODUCTS.company_name` — flagged FULL_NAME (0.55). `"Acme Corp"` satisfies the FULL_NAME value regex; a company name is shaped exactly like a person's name.
+- `PRODUCTS.sku` — flagged ACCOUNT_NUMBER (0.55). `"SKU-1234"` matches the `[A-Za-z]{2,4}-\d{4,10}` account-prefix pattern.
+- `SHIPMENTS.ship_date` — flagged PHONE (0.55). Same date-shaped-string cause as `order_date`.
+
+All four now score exactly 0.55 — a **sample-only** rule match, with no name
+signal at all. That is a single remaining root cause: value regexes that are
+loose enough to match non-PII strings. In every case the LLM disagreed, blend
+case 3c capped the result below the auto-configure threshold, and the column
+reached the review queue rather than being masked.
 
 ## Layer 1 vs Layer 2 Split
 
-- Resolved at Layer 1 (rule engine only, no LLM call): 21/30 (70%)
-- Escalated to Layer 2 (LLM): 9/30, of which only 2 (`next_of_kin`,
+- Resolved at Layer 1 (rule engine only, no LLM call): 22/30 (73%)
+- Escalated to Layer 2 (LLM): 8/30, of which only 2 (`next_of_kin`,
   `ref_code`) had zero rule-layer opinion at all -- the rest were
   cross-checked against a partial rule signal, not LLM-alone.

@@ -120,7 +120,7 @@ cp .env.example .env
 .venv/bin/pytest
 ```
 
-26 tests, from the repository root. Needs Ollama running. First run takes a
+28 tests, from the repository root. Needs Ollama running. First run takes a
 few minutes; subsequent runs are much faster because the LLM cache is warm.
 
 ### Talk to the agent
@@ -245,11 +245,11 @@ calling the model at all.
 
 ## Test coverage
 
-26 tests. `.venv/bin/pytest` from the repository root runs all of them.
+28 tests. `.venv/bin/pytest` from the repository root runs all of them.
 
 | Area | Tests | What is actually asserted |
 |---|---|---|
-| `pii-detector/tests/` | 8 | Golden-set recall ≥ 0.90 and precision ≥ 0.70 (measured 1.00 / 0.75); the four contract tests from the task doc; promoted-keyword overlay works and an empty overlay is a no-op; a repeated identical column never reaches the model |
+| `pii-detector/tests/` | 10 | Golden-set recall ≥ 0.90 and precision ≥ 0.70 (measured 1.00 / 0.75); auto-configuration rate ≥ 0.80 (0.93) and the review-routing invariant in both directions; the four contract tests from the task doc; promoted-keyword overlay works and an empty overlay is a no-op; a repeated identical column never reaches the model |
 | `masking-generator/tests/` | 6 | Low confidence goes to `review_queue` and not `masking_rules`; every `documentation_reference` resolves to a real corpus file; summary counts reconcile; conflict alternatives; a real detector→generator integration run |
 | `agent/tests/quality_tests.py` | 12 | All six required quality types — semantic correctness, grounding via tool-call interception, out-of-scope rejection, PII recall/precision regression, masking-config completeness, plus the A/B baseline as a script |
 
