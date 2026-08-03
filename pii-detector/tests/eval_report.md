@@ -46,6 +46,39 @@ correctly resolves to not-PII but via the same single-source mechanism).
 The prompt change makes this particular reasoning error less likely; it
 does not eliminate the structural gap.
 
+## Also fixed during evaluation
+
+**`suggested_rule_keyword` never populated.** The classifier is instructed to
+propose a keyword whenever it identifies PII the rule dictionary missed --
+the signal that feeds the human-reviewed rule-promotion loop. Across 100+
+escalated decisions it returned `null` every time, including on verified
+zero-signal columns it classified correctly. Root cause was prompt structure,
+not model capability: the instruction sat *after* the JSON schema block, and
+its phrasing ("if ... return it") made `null` the comfortable default. Moving
+it into the numbered rules block and inverting the default ("you MUST fill
+this in ... return null ONLY when ...") fixed it on the first attempt, with
+correct discrimination -- `elektropost` -> `"elektropost"`, `shimei` ->
+`"shimei"`, but `ref_code` -> `null`, since that name is contentless as a
+standing rule. Classification metrics above are unchanged by the edit.
+
+**Redundant keyword suggestions.** `_blend` gated `suggested_rule_keyword`
+only on whether the LLM said PII, never on whether the keyword dictionary had
+already matched the column *by name*. A column the dictionary already catches
+would still produce a suggestion to add a keyword for it -- a no-op a reviewer
+still has to read. `_score_rule_layer` now returns `name_matched` explicitly
+(rather than leaving it to be inferred from whether the score is 0.60 or 0.55,
+which would break silently if those scores were retuned) and `_blend` gates on
+it. Verified both directions on live columns: `handy_nr` (no dictionary
+signal) still yields `"handy_nr"`; `nomor_telepon` (already caught by the
+`"tel"` keyword) is correctly suppressed.
+
+**Prompt changes were invisible to the cache.** `make_cache_key` keyed on
+model and column inputs but not on the prompt, so any `SYSTEM_PROMPT` edit
+would have been silently ignored for every already-cached column. A hash of
+the prompt is now part of the key. This did not affect the fix above -- the
+test column happened not to be cached -- but it would have made the next
+prompt change appear to do nothing.
+
 ## Errors
 
 **False negatives:** none in this run.

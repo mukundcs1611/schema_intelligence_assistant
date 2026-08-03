@@ -181,6 +181,14 @@ arguments are discarded. Grounding is likewise structural: documentation
 questions reach `search_masking_docs` on a code path, and the citation is
 appended by code from the retrieved chunk, not trusted to the model.
 
+Tool selection runs at `temperature=0` — a routing decision, not creative
+generation. That was not the original setting, and the omission surfaced as a
+grounding test that passed by hand and failed under pytest minutes later, with
+no code change between the two runs. An intermittent grounding rule is worse
+than a broken one: it passes often enough to look correct. The A/B baseline
+now runs every query three times and reports whether routing was consistent,
+so that class of regression is visible rather than intermittent.
+
 **4. Everything is logged; nothing learns automatically**
 
 Every decision lands in `audit_log.db` — that is what makes "why was this
@@ -205,10 +213,13 @@ calling the model at all.
 
 ## What I would do differently with more time
 
-1. **Make `suggested_rule_keyword` actually fire.** The rule-promotion
-   pipeline is built and tested, but the model has never once populated the
-   field that feeds it across 100+ real decisions. See BLOCKERS.md — the
-   plumbing works; the signal doesn't arrive.
+1. **Replace the agent's out-of-scope keyword check with a classifier call.**
+   When tool selection returns no tool, the agent distinguishes "out of
+   scope" from "in scope but no data attached" using a keyword-pair heuristic
+   (action verb + data noun). It misfires on queries that borrow data
+   vocabulary — *"check the weather columns for Hyderabad"* gets asked for a
+   schema instead of refused. Bounded (it asks rather than fabricates) but
+   real. See BLOCKERS.md.
 
 2. **Fix short-keyword substring matching.** Three of the five known false
    positives come from `"pan"` matching inside `com·pan·y` and `"ip"` inside
@@ -256,8 +267,11 @@ Evaluation reports (measured, not asserted): `pii-detector/tests/eval_report.md`
   concept coverage — properties that survive rewording. Whether an answer
   *reads* well is not asserted, because the mechanical proxies for it punish
   harmless rephrasing and still miss confident wrongness.
-- **The rule-promotion loop end to end.** Verified with synthetic data only;
-  see BLOCKERS.md.
+- **The rule-promotion loop.** Exercised end to end against real detections —
+  the model proposed `elektropost`, a reviewer approved it, and the next
+  `detect()` resolved that column at Layer 1 with no LLM call — but there is
+  no automated test for it, because asserting on live model output would make
+  the suite flaky for the wrong reason.
 
 Known limitations are documented in **BLOCKERS.md** rather than left for the
 reader to discover.

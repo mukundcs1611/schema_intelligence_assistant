@@ -160,9 +160,9 @@ The system is designed for n+1 iterations:
 - Existing categories' keyword coverage grows from PS team corrections
   through a human-reviewed promotion step: the LLM's suggested keywords
   are logged to the audit trail, a reviewer approves them, and approved
-  keywords load from a supplementary config file at startup -- not fully
-  automatic (an unreviewed LLM suggestion never silently becomes a trusted
-  rule), and not a redeploy either.
+  keywords are picked up from a supplementary config file on the very next
+  detection — no restart, no redeploy. Not fully automatic, by design: an
+  unreviewed LLM suggestion never silently becomes a trusted rule.
 - New PII categories require a code change, by design. A new category
   needs a real masking function and real documentation, and neither of
   those is something a config file can generate. "Configuration, not

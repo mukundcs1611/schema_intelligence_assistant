@@ -1,75 +1,9 @@
 # Blockers
 
-## Rule-promotion keyword suggestions not firing from the LLM
-
-**Status:** Deferred. Does not block any JD-required deliverable -- see
-"Why this isn't blocking submission" below.
-
-**Scope note:** this affects an optional, self-initiated capability (see
-below), not the core PII detection engine (Part 1B) or the RAG/masking-
-generator work (Part 2). Detection accuracy, recall, precision, and
-review-queue population -- everything graded under "PII detection accuracy
-+ testing" -- are entirely unaffected by this.
-
-### What's blocked
-
-`pii-detector/detector.py`'s `SYSTEM_PROMPT` instructs the LLM
-(`qwen2.5:7b`) to return a `suggested_rule_keyword` whenever it classifies
-a column as PII using a term the rule-layer keyword dictionary should have
-caught but didn't. This was meant to feed a human-reviewed promotion
-pipeline (`pii-detector/promote_rules.py`, `promoted_rules.yaml`) that lets
-the rule dictionary grow from real, LLM-observed vocabulary gaps without a
-code change or redeploy -- a claim `QUALITY_CRITERIA.md` Section 5 makes.
-
-In practice, across every real LLM-escalated decision observed during this
-project (100+, across multiple full golden-set runs) and every deliberately
-constructed test case -- including a verified true zero-signal case
-(`elektropost`, an obfuscated German synonym for "email address", zero
-rule-layer name or sample match, correctly classified `EMAIL` at 0.85
-confidence) -- the model has never once populated this field.
-
-### What was verified
-
-- The instruction itself is reachable and well-formed in the prompt sent
-  to the model.
-- The failure isn't a downstream bug: the promotion plumbing that reads
-  this field (`get_promoted_keywords()`'s mtime-cached YAML overlay in
-  `pii_patterns.py`, `promote_rules.py`'s reviewer CLI) is built and
-  independently verified against synthetic seed data -- approving a
-  keyword is picked up by the very next `detect()` call, in a fresh
-  process, with no restart.
-- The gap is specifically the model not reliably attending to a secondary
-  field in a multi-field JSON response, not a logic error in how the field
-  is used once populated.
-
-### A related, currently-unobservable bug found while investigating
-
-`_blend()`'s `suggested_keyword` computation is gated only on
-`llm_is_pii`, not on whether the rule layer's *name* dictionary already
-matched. When `rule_category` is set via a sample-only match
-(`rule_score == 0.55`, name didn't match), a suggestion is legitimate --
-the name genuinely has a dictionary gap. When `rule_category` is set via a
-name match (`rule_score == 0.60`), the name dictionary already caught the
-term, and a suggestion would be redundant. `_blend` currently can't tell
-these two cases apart. This has caused zero observed incorrect behavior so
-far, purely because the LLM has never populated the field at all -- it's a
-fix that matters once the primary blocker above is resolved, not before.
-
-### Not attempted, given time constraints
-
-Prompt rewording, reordering the instruction earlier in `SYSTEM_PROMPT`,
-or trying `qwen2.5:14b` in place of `qwen2.5:7b` for this specific field --
-all plausible next steps, none tried yet.
-
-### Why this isn't blocking submission
-
-`promote_rules.py` and `promoted_rules.yaml` are deliberately held out of
-commits until this is resolved. Nothing in the JD's Day 1, Day 2, or Day 3
-deliverable list depends on rule-promotion working -- it is an
-architecture commitment made to ourselves in `QUALITY_CRITERIA.md`, not a
-graded capability.
-
----
+Open issues only. Things found and fixed during development are recorded
+where they belong -- detector fixes in `pii-detector/tests/eval_report.md`,
+architectural lessons in `README.md`'s design decisions -- rather than kept
+here as resolved entries.
 
 ## PII detector: 5 known false positives, root cause now diagnosed but not fixed
 
@@ -138,25 +72,6 @@ than extending the keyword lists, which would repeat the substring
 brittleness already documented above under the false-positives section.
 Not attempted -- the cost is an extra LLM call on every no-tool-selected
 message, for a failure mode that is bounded and rare.
-
-## Agent: tool-selection non-determinism (FIXED, recorded for the record)
-
-Found while writing the quality test suite, not by inspection: the
-grounding-enforcement test for the GDPR question passed when run manually
-and failed under pytest, minutes apart, with no code change in between.
-Root cause: `_select_tool()` called the model without `options={"temperature": 0}`,
-so tool selection varied run to run -- the same question selected
-`search_masking_docs` sometimes and no tool at all other times. That made
-the grounding rule (the task doc's hard requirement that documentation
-questions must always retrieve first) *intermittent* rather than
-guaranteed.
-
-Fixed by setting `temperature=0` on the tool-selection call, matching what
-`detector.py` already did everywhere. Verified with 5 consecutive
-selections on the previously-flaky query, all consistent. Recorded here
-because the class of bug is worth remembering: a flaky grounding rule is
-worse than a broken one, since it passes tests often enough to look
-correct.
 
 ## RAG retrieval: known ranking weaknesses, not tuned away
 
