@@ -2,267 +2,262 @@ Implementation: Python
 
 # Schema Intelligence Assistant
 
-An AI-powered tool that analyses database schemas, identifies PII columns,
-suggests masking rules, and answers natural language questions about data
-masking — reducing PS team onboarding time from 3–4 days to under 4 hours.
+Analyses a database schema, identifies which columns contain PII, generates a
+masking configuration for them, and answers questions about masking
+documentation — targeting the onboarding bottleneck where a professional
+services team spends 3–4 days per customer reviewing schemas by hand.
+
+Runs entirely on local models (Ollama). No API keys, no external calls.
 
 ---
 
 ## Architecture
 
 ```
-                        ┌─────────────────────────────┐
-                        │     User / PS Team           │
-                        │  (terminal / agent chat)     │
-                        └──────────────┬──────────────┘
-                                       │
-                                       ▼
-                        ┌─────────────────────────────┐
-                        │      agent.py               │
-                        │  LangGraph StateGraph        │
-                        │  qwen2.5:14b (local Ollama)  │
-                        │                             │
-                        │  Tools:                     │
-                        │  ├── detect_pii_columns      │
-                        │  ├── generate_masking_config │
-                        │  └── search_masking_docs     │
-                        └──────────────┬──────────────┘
-                                       │
-                                       ▼
-                        ┌─────────────────────────────┐
-                        │      pipeline.py             │
-                        │  SchemaIntelligencePipeline  │
-                        │  (stable spine — contracts   │
-                        │   fixed, modules replaceable)│
-                        └──┬──────────┬───────────┬───┘
-                           │          │           │
-               ┌───────────▼─┐  ┌─────▼──────┐  ┌▼────────────────┐
-               │ detector.py  │  │generator.py│  │  retrieve.py    │
-               │              │  │            │  │                 │
-               │ Layer 1:     │  │Takes       │  │ Hybrid:         │
-               │ Rule engine  │  │DetectionR- │  │ Vector search   │
-               │ (pii_        │  │esult list  │  │ (nomic-embed)   │
-               │  patterns.py)│  │            │  │ + BM25          │
-               │              │  │Produces    │  │ fused via RRF   │
-               │ Layer 2:     │  │MaskingConf-│  │                 │
-               │ qwen2.5:7b   │  │ig JSON     │  │ 12 corpus docs  │
-               │ (uncertain   │  │            │  │ pii_category    │
-               │  cases only) │  │auto_rules  │  │ metadata filter │
-               │              │  │review_queue│  │                 │
-               └──────┬───────┘  └─────┬──────┘  └────────────────┘
-                      │                │
-                      └────────┬───────┘
-                               │
-                               ▼
-                  ┌────────────────────────┐
-                  │    audit_logger.py     │
-                  │    SQLite backend      │
-                  │    audit_log.db        │
-                  │                        │
-                  │ Every decision logged: │
-                  │ automated + human      │
-                  └────────────────────────┘
-                               │
-                               ▼
-                  ┌────────────────────────┐
-                  │   Feedback Loop        │
-                  │   python demo.py       │
-                  │      --improve         │
-                  │                        │
-                  │ Corrections → patterns │
-                  │ Patterns → new rules   │
-                  │ Rules → recall improves│
-                  └────────────────────────┘
+                    ┌────────────────────────────────┐
+                    │  User (agent REPL / library)   │
+                    └───────────────┬────────────────┘
+                                    │  message
+                                    ▼
+   ┌────────────────────────────────────────────────────────────────┐
+   │  agent/agent.py                                                │
+   │                                                                │
+   │  1. Deterministic parse   schema JSON? "column X in table Y"?  │
+   │                           "generate masking config"?           │
+   │     ── resolves most requests with no LLM call at all ──       │
+   │                                                                │
+   │  2. Ollama native tool-calling (qwen2.5:7b, temperature=0)     │
+   │     chooses the tool for what's left; its ARGUMENTS are        │
+   │     discarded — only the selection is used  (see decision 3)   │
+   │                                                                │
+   │  3. No tool selected → refuse (out of scope) or ask for data   │
+   └───────┬─────────────────────┬──────────────────────┬───────────┘
+           │                     │                      │
+           ▼                     ▼                      ▼
+  ┌─────────────────┐  ┌──────────────────┐  ┌────────────────────┐
+  │ pii-detector/   │  │ masking-         │  │ rag/retrieve.py    │
+  │   detector.py   │  │  generator/      │  │                    │
+  │                 │  │   generator.py   │  │ vector (nomic-     │
+  │ L1 rule engine  │  │                  │  │  embed-text)       │
+  │  keywords+regex │  │ DetectionResult[]│  │      +             │
+  │  +Luhn checksum │  │        ↓         │  │ BM25 (rank_bm25)   │
+  │  ~70% resolve   │  │ masking_rules[]  │  │      ↓             │
+  │  here, no LLM   │  │ review_queue[]   │  │ RRF fusion (k=60)  │
+  │       ↓         │  │ confidence_      │  │      ↓             │
+  │ L2 qwen2.5:7b   │  │   summary        │  │ pii_category       │
+  │  only when L1   │  │                  │  │  filter (post-     │
+  │  is unsure      │  │ doc refs point   │  │  fusion)           │
+  │       ↓         │  │ into rag/corpus/ │  │                    │
+  │ confidence      │  └──────────────────┘  │ ← rag/ingest.py    │
+  │  blending       │                        │   12 docs → 49     │
+  └────┬───────┬────┘                        │   chunks (H2/H3)   │
+       │       │                             └────────────────────┘
+       │       └──────────────┐
+       ▼                      ▼
+┌──────────────┐      ┌──────────────┐
+│ audit_log.db │      │ llm_cache.db │
+│              │      │              │
+│ every        │      │ exact-match  │
+│ decision,    │      │ cache on the │
+│ append-only  │      │ L2 call      │
+└──────────────┘      └──────────────┘
 ```
 
-### Data Flow
+### Data flow
 
 ```
-Schema JSON in
-      │
-      ▼
-PiiDetector
-  Layer 1: rules (name dict + sample regex + datatype signal)
-  conf = 3/3 signals → 0.95 → AUTO  |  ambiguous → Layer 2
-  Layer 2: qwen2.5:7b → structured JSON → confidence blend
-  conf ≥ 0.80 → auto-configure  |  conf < 0.80 → review queue
-      │
-      ▼
-MaskingConfigGenerator
-  high confidence detections → masking_rules[]
-  low confidence detections  → review_queue[]
-  documentation reference    → looked up from RAG corpus
-      │
-      ▼
-MaskingConfig JSON out
-  + audit_log.db entry for every decision
+column descriptor JSON
+        │
+        ▼
+  rule layer (free, deterministic)
+    name keyword match?  sample regex match?  checksum?
+    both match      → 0.97, decided here, no LLM call
+    safe-list name  → not PII 0.95, no LLM call
+    otherwise       → escalate
+        │
+        ▼
+  LLM layer (qwen2.5:7b, temperature=0, cached)
+        │
+        ▼
+  confidence blending — agree → weighted; no corroboration → capped
+    0.85; rule/LLM conflict → capped 0.70 so it always reaches review
+        │
+        ▼
+  is_pii decided first, THEN a threshold per branch:
+    PII     ≥ 0.80 → auto-configure, else → review queue
+    not PII ≥ 0.60 → accepted,       else → review queue anyway
+        │
+        ▼
+  masking config JSON  (masking_rules / review_queue / summary)
+  + one audit_log.db row per decision
 ```
 
 ---
 
 ## Setup
 
-### Prerequisites
+Requires Python 3.10+ and [Ollama](https://ollama.com) running locally.
 
 ```bash
-# Python 3.10+
-python3 --version
-
-# Ollama
-ollama --version
-
-# Pull models (do this first — 14b takes a few minutes)
-ollama pull qwen2.5:7b
-ollama pull qwen2.5:14b
-ollama pull nomic-embed-text
+ollama pull qwen2.5:7b && ollama pull nomic-embed-text
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python rag/ingest.py
 ```
 
-### Install
+`rag/ingest.py` builds the retrieval index (`rag/index/`) and must run once
+before the agent or the quality tests — retrieval reads the persisted index.
+Expect `Ingested 49 chunks from 12 documents`.
+
+Configuration is optional — every setting has a working default:
 
 ```bash
-git clone https://github.com/mukundcs1611/schema_intelligence_assistant
-cd schema_intelligence_assistant
 cp .env.example .env
-pip install -r requirements.txt
 ```
 
-### Ingest RAG corpus
+### Run the tests
 
 ```bash
-python rag/ingest.py
+.venv/bin/pytest
 ```
 
-### Run tests
+26 tests, from the repository root. Needs Ollama running. First run takes a
+few minutes; subsequent runs are much faster because the LLM cache is warm.
+
+### Talk to the agent
 
 ```bash
-pytest pii-detector/tests/
-pytest masking-generator/tests/
-pytest agent/tests/quality_tests.py
+.venv/bin/python agent/agent.py
 ```
 
-### Run demo (end to end)
+Try: `What does DATE_SHIFT do?` · `Is column ref_code in table ORDERS PII?` ·
+`What is the weather in Hyderabad?` · or paste a schema JSON array and then
+ask `Generate a masking configuration for these results`.
+
+### Regenerate the A/B model baseline
 
 ```bash
-# Detect PII in a sample schema
-python demo.py --schema pii-detector/tests/demo_schema.json
-
-# Review queue — interactive HITL
-python demo.py --review
-
-# Improve rules from audit log
-python demo.py --improve
-
-# Re-run to see improvement
-python demo.py --schema pii-detector/tests/demo_schema.json
-```
-
-### Run agent (conversational)
-
-```bash
-python agent/agent.py
+ollama pull qwen2.5:14b            # only needed for this
+cd agent && ../.venv/bin/python tests/ab_comparison.py
 ```
 
 ---
 
 ## Design Decisions
 
-**1. Hybrid detection: rules first, LLM only for uncertain cases**
+**1. Hybrid detection — rules first, LLM only when the rules are unsure**
 
-A rule engine (name dictionary + sample regex + datatype signal) handles
-~80% of columns at zero LLM cost. qwen2.5:7b is called only for columns
-where rule signals are ambiguous. This keeps LLM cost proportional to
-schema complexity, not schema size. A 5,000-column schema with standard
-naming conventions costs almost nothing to classify.
+A deterministic layer (keyword dictionary + value regex + Luhn checksum)
+resolves about 70% of the golden set with no LLM call. `qwen2.5:7b` is
+invoked only for the remainder. Cost scales with schema *ambiguity*, not
+schema size, which is what makes the 5,000-column target in SCALABILITY.md
+tractable. It also means the auditable layer decides the easy cases, and the
+probabilistic one only ever argues about genuinely hard ones.
 
-**2. No two-agent verifier pattern**
+**2. Two thresholds, not one confidence scale**
 
-A generator + critic (LLM-as-judge) pattern was considered and rejected.
-The review queue provides the same protection at zero additional API cost.
-LLM errors are correlated — a second call to the same model family has
-the same blind spots as the first. A human reviewer is the uncorrelated
-safety net.
+`is_pii` is settled first, from the rule and LLM signals; confidence is then
+checked against a *different* threshold depending on which way it went — 0.80
+for PII (below it, review), 0.60 for not-PII (below it, review anyway). The
+second branch is deliberately beyond the task's literal contract: an
+ungrounded low-confidence "not PII", with no rule-layer opinion to
+cross-check it, is exactly the shape of a compliance miss, so it is never
+silently cleared. QUALITY_CRITERIA.md originally specified a single scale;
+implementing the blending logic showed that model was wrong, and it was
+revised with a dated note rather than quietly left inconsistent.
 
-**3. pipeline.py as the stable spine**
+**3. Raw tool-calling, and the model's arguments are thrown away**
 
-All modules communicate through fixed JSON contracts. The detector,
-generator, retriever, and audit logger are replaceable without changing
-anything downstream. The agent calls pipeline methods, not modules
-directly. This design supports n+1 iterations: new PII categories,
-swapped models, and per-customer threshold tuning all happen without
-architectural changes.
+No LangChain or LangGraph. All seven interactions are at most one tool call,
+so a graph framework would add a dependency and an abstraction layer for a
+problem simpler than the tool solving it, and would make the grounding test
+(intercepting a tool call) harder rather than easier.
 
-**4. SQLite for audit logging**
+The agent uses Ollama's native tool-calling for tool *selection* only.
+Testing showed `qwen2.5` picks the right tool reliably but fabricates
+plausible arguments when the real data isn't in front of it — asked about one
+named column, it invented an entire five-column schema. So every structured
+argument is parsed from the message deterministically and the model's own
+arguments are discarded. Grounding is likewise structural: documentation
+questions reach `search_masking_docs` on a code path, and the citation is
+appended by code from the retrieved chunk, not trusted to the model.
 
-Zero infrastructure, queryable, survives upgrades, readable by humans.
-Every automated and human decision is persisted. The feedback loop reads
-the audit log to find correction patterns and propose new rules. At
-production scale (500+ customers) this migrates to a centralised
-time-series store — the schema is identical, only the backend changes.
+**4. Everything is logged; nothing learns automatically**
 
-**5. Confidence threshold in .env — not hardcoded**
+Every decision lands in `audit_log.db` — that is what makes "why was this
+column masked?" answerable months later. The rule dictionary can grow from
+LLM-suggested keywords, but only through an explicit human approval step,
+never automatically. Auto-promoting an unreviewed suggestion into the
+deterministic layer would destroy the exact property that layer exists for.
+This is human review as a safety net, not a learning loop — no reward signal,
+no training, no weights.
 
-Default 0.80. Tunable per customer deployment without code changes.
-During PS team pilot, the threshold is validated against a customer-labelled
-sample before the tool runs on the full schema. If the threshold must drop
-below 0.60 to maintain ≥80% auto-configuration rate, the tool is flagged
-as poorly calibrated for that schema type.
+**5. Local models, tiered, with an exact-match cache**
 
-**6. Local Ollama only — no external API dependencies**
-
-No API keys. No rate limits. No cost per call during development.
-qwen2.5:7b for classification (4.7GB, fast on M2 Pro via Metal).
-qwen2.5:14b for the conversational agent (9GB, reliable tool-calling).
-nomic-embed-text for embeddings (274MB, runs on CPU).
-The cost story for SCALABILITY.md is honest: near-zero marginal cost
-per column on self-hosted infrastructure.
-
----
-
-## What I Would Do Differently With More Time
-
-1. **Customer-specific fine-tuning** — collect PS team corrections per
-   industry vertical and fine-tune a small classifier. Current approach
-   relies on qwen2.5:7b zero-shot generalisation for ambiguous cases.
-
-2. **Embedding-based pattern matching for Layer 1** — replace the static
-   name dictionary with semantic similarity against a PII pattern library.
-   Handles synonyms and non-English names without manual dictionary updates.
-
-3. **Streaming agent responses** — current agent returns complete responses.
-   For large schemas (500+ columns), streaming detection results as they
-   arrive would significantly improve perceived performance.
-
-4. **Per-customer threshold calibration UI** — the PS team currently tunes
-   the threshold via .env. A simple web interface showing recall vs
-   auto-configuration rate trade-off curves would make this decision
-   visible and auditable.
-
-5. **RAG corpus versioning** — when a new masking function is released,
-   the corpus is re-ingested manually. An automated pipeline watching
-   a docs repository and triggering re-ingestion on change would keep
-   the RAG current without PS team intervention.
+`qwen2.5:7b` for both classification and the agent, `nomic-embed-text` for
+embeddings. The Layer 2 call runs at `temperature=0` and is therefore meant to
+be deterministic per input, which makes an exact-match cache (`llm_cache.db`)
+safe: a hit returns precisely what a fresh call would have. Blending and audit
+logging still run on every detection, cached or not, so the audit trail stays
+complete. Repeated schema scans — the actual production pattern — mostly stop
+calling the model at all.
 
 ---
 
-## Test Coverage Summary
+## What I would do differently with more time
 
-| What is tested | How |
-|---|---|
-| PII detection accuracy | Golden set recall/precision on 30 labelled columns |
-| Confidence threshold routing | Every conf < 0.80 PII detection in review queue |
-| Individual PII categories | Unit tests for EMAIL, SSN, PHONE, CREDIT_CARD, ACCOUNT_NUMBER, NATIONAL_ID, DATE_OF_BIRTH, IP_ADDRESS, FULL_NAME, ADDRESS |
-| Non-PII not flagged | transaction_id, quantity, ship_date, company_name |
-| RAG retrieval quality | Recall@3 on 10 eval queries |
-| Masking config completeness | All high-confidence PII columns in masking_rules[] |
-| Review queue population | All low-confidence PII columns in review_queue[] |
-| Agent grounding | Tool call interception — search_masking_docs called before doc answers |
-| Agent out-of-scope rejection | Capital of France, weather questions refused |
-| Agent missing input handling | No schema provided — agent asks, does not hallucinate |
-| Recall regression | Golden set re-run on every agent test run |
-| A/B model baseline | 5 standard queries scored against rubric |
+1. **Make `suggested_rule_keyword` actually fire.** The rule-promotion
+   pipeline is built and tested, but the model has never once populated the
+   field that feeds it across 100+ real decisions. See BLOCKERS.md — the
+   plumbing works; the signal doesn't arrive.
 
-**What is not tested:**
-- Real customer schema accuracy (requires customer-labelled sample — by design)
-- LLM response latency under load
-- Concurrent schema analysis requests
-- RAG corpus staleness detection
+2. **Fix short-keyword substring matching.** Three of the five known false
+   positives come from `"pan"` matching inside `com·pan·y` and `"ip"` inside
+   `descr·ip·tion`. Word-boundary matching for short keywords, while keeping
+   compound matches like `date_of_birth`, is a real change to the matching
+   rule and needs full re-verification — not something to rush.
+
+3. **A ranked candidate list instead of one alternative.** With only two
+   opinions (rule layer, LLM), `alternatives` in the review queue can hold at
+   most one entry. Returning every category with any rule-layer signal would
+   be cheap and strictly more informative.
+
+4. **Widen the RAG eval set.** Ten queries over twelve documents, where I
+   wrote both the corpus and the queries, is a weak independence guarantee.
+   Recall@3 of 1.00 should be read as "hybrid retrieval works", not "retrieval
+   is solved".
+
+5. **Parallelise detection.** `detect_all` is sequential; escalated columns
+   are I/O-bound on the model. A thread pool over just the escalated fraction
+   is the obvious next step for the 5,000-column target.
+
+---
+
+## Test coverage
+
+26 tests. `.venv/bin/pytest` from the repository root runs all of them.
+
+| Area | Tests | What is actually asserted |
+|---|---|---|
+| `pii-detector/tests/` | 8 | Golden-set recall ≥ 0.90 and precision ≥ 0.70 (measured 1.00 / 0.75); the four contract tests from the task doc; promoted-keyword overlay works and an empty overlay is a no-op; a repeated identical column never reaches the model |
+| `masking-generator/tests/` | 6 | Low confidence goes to `review_queue` and not `masking_rules`; every `documentation_reference` resolves to a real corpus file; summary counts reconcile; conflict alternatives; a real detector→generator integration run |
+| `agent/tests/quality_tests.py` | 12 | All six required quality types — semantic correctness, grounding via tool-call interception, out-of-scope rejection, PII recall/precision regression, masking-config completeness, plus the A/B baseline as a script |
+
+Evaluation reports (measured, not asserted): `pii-detector/tests/eval_report.md`,
+`rag/eval/recall_report.md`, `agent/tests/ab_baseline_results.md`.
+
+**What is not tested, and why**
+
+- **Real customer schema accuracy.** The golden set is data I invented. Only a
+  customer-labelled sample can support an accuracy claim for a given customer —
+  QUALITY_CRITERIA.md describes that validation step.
+- **Concurrency and load.** Nothing here runs in parallel yet, so there is
+  nothing to test; see improvement 5 above.
+- **Prose quality of agent answers.** Tests assert grounding, citation, and
+  concept coverage — properties that survive rewording. Whether an answer
+  *reads* well is not asserted, because the mechanical proxies for it punish
+  harmless rephrasing and still miss confident wrongness.
+- **The rule-promotion loop end to end.** Verified with synthetic data only;
+  see BLOCKERS.md.
+
+Known limitations are documented in **BLOCKERS.md** rather than left for the
+reader to discover.
