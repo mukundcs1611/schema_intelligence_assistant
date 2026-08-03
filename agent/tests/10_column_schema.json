@@ -1,0 +1,12 @@
+[
+  {"table_name": "CUSTOMERS", "column_name": "email_address", "data_type": "VARCHAR(255)", "sample_values": ["jane.doe@example.com", "mark@corp.io"], "nullable": false},
+  {"table_name": "CUSTOMERS", "column_name": "full_name", "data_type": "VARCHAR(120)", "sample_values": ["Jane Doe", "Mark Smith"], "nullable": false},
+  {"table_name": "CUSTOMERS", "column_name": "phone_number", "data_type": "VARCHAR(20)", "sample_values": ["+1-555-234-5678", "555-908-1122"], "nullable": true},
+  {"table_name": "CUSTOMERS", "column_name": "date_of_birth", "data_type": "DATE", "sample_values": ["1985-03-12", "1990-11-02"], "nullable": true},
+  {"table_name": "CUSTOMERS", "column_name": "home_address", "data_type": "VARCHAR(200)", "sample_values": ["221B Baker Street", "42 Wallaby Way, Sydney"], "nullable": true},
+  {"table_name": "ORDERS", "column_name": "transaction_id", "data_type": "BIGINT", "sample_values": ["100001", "100002"], "nullable": false},
+  {"table_name": "ORDERS", "column_name": "quantity", "data_type": "INT", "sample_values": ["3", "17"], "nullable": false},
+  {"table_name": "ORDERS", "column_name": "status", "data_type": "VARCHAR(20)", "sample_values": ["SHIPPED", "PENDING"], "nullable": false},
+  {"table_name": "SESSIONS", "column_name": "client_ip", "data_type": "VARCHAR(45)", "sample_values": ["192.168.1.10", "10.0.0.5"], "nullable": false},
+  {"table_name": "SESSIONS", "column_name": "session_id", "data_type": "VARCHAR(64)", "sample_values": ["sess_abc123xyz"], "nullable": false}
+]
