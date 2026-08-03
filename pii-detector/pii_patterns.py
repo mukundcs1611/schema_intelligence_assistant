@@ -136,6 +136,28 @@ def tokenize(column_name: str) -> list[str]:
     return [t for t in re.split(r"[^a-zA-Z0-9]+", column_name.lower()) if t]
 
 
+def _keyword_hits(keyword: str, token_set: set, joined: str) -> bool:
+    """Multi-word keywords match as a substring of the underscore-joined
+    name -- that is the only way "date_of_birth" can match a column called
+    `cust_date_of_birth`.
+
+    Single-word keywords must match a whole token. Substring matching for
+    them produced real false positives: "pan" (Primary Account Number) fires
+    inside "com-PAN-y", and "ip" inside "descr-IP-tion" and "sh-IP_date".
+    Requiring a whole token costs nothing for legitimate columns, which spell
+    the keyword as its own token (`client_ip`, `src_ip`, `pan_number`).
+
+    The cost is agglutinative names where the term is fused into a longer
+    word -- German "nachname", Indonesian "nomor_telepon". Those now fall
+    through to the LLM on sample evidence and surface as rule-promotion
+    candidates, which is the intended path for a genuine dictionary gap
+    rather than a coincidental character match.
+    """
+    if "_" in keyword:
+        return keyword in joined
+    return keyword in token_set
+
+
 def name_matches(column_name: str, category: str) -> bool:
     # `joined` must preserve the original token order (a set's iteration
     # order is randomized per-process in Python, which made multi-word
@@ -147,10 +169,10 @@ def name_matches(column_name: str, category: str) -> bool:
     token_set = set(token_list)
     joined = "_".join(token_list)
     keywords = POSITIVE_NAME_KEYWORDS.get(category, []) + get_promoted_keywords().get(category, [])
-    if not any(kw in token_set or kw in joined for kw in keywords):
+    if not any(_keyword_hits(kw, token_set, joined) for kw in keywords):
         return False
     negatives = NEGATIVE_NAME_KEYWORDS.get(category, [])
-    if any(neg in token_set or neg in joined for neg in negatives):
+    if any(_keyword_hits(neg, token_set, joined) for neg in negatives):
         return False
     return True
 
