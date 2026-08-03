@@ -98,6 +98,42 @@ def test_empty_overlay_is_a_no_op(tmp_path, monkeypatch):
     assert pii_patterns.name_matches("email_address", "EMAIL") is True
 
 
+def test_auto_configuration_rate_on_golden_set():
+    """QUALITY_CRITERIA.md lists auto-configuration rate >= 0.80 as a Day 1
+    success metric, but nothing asserted it -- so when one true positive
+    started landing in review, eval_report.md kept claiming 1.00 until it
+    was hand-checked. An unasserted target is a target that drifts.
+    """
+    with open(Path(__file__).parent / "schema_test_cases.json") as f:
+        cases = json.load(f)
+    true_positives = [
+        r for r in (detector.detect(c["input"]) for c in cases if c["expected"]["is_pii"])
+        if r["is_pii"]
+    ]
+    assert true_positives, "detector found no PII in the golden set"
+    auto = sum(1 for r in true_positives if not r["review_required"])
+    rate = auto / len(true_positives)
+    assert rate >= 0.80, f"Auto-configuration rate {rate:.2f} below 0.80"
+
+
+def test_no_pii_detection_above_threshold_is_left_in_review():
+    """QUALITY_CRITERIA.md's "every PII detection below 0.80 in review queue
+    (zero exceptions)" -- asserted in both directions, since the inverse
+    (a high-confidence detection needlessly queued) would quietly erode the
+    time saving the tool exists for.
+    """
+    with open(Path(__file__).parent / "schema_test_cases.json") as f:
+        cases = json.load(f)
+    for c in cases:
+        r = detector.detect(c["input"])
+        if not r["is_pii"]:
+            continue
+        if r["confidence"] < 0.80:
+            assert r["review_required"], f"{c['input']['column_name']} below threshold but not queued"
+        else:
+            assert not r["review_required"], f"{c['input']['column_name']} above threshold but queued anyway"
+
+
 class _CountingFakeClient:
     """Stands in for ollama.Client -- returns a fixed valid response and
     counts how many times .chat() was actually invoked, so the cache test
