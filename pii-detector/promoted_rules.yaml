@@ -1,0 +1,8 @@
+# category -> list of approved keywords
+# Populated by promote_rules.py after a human reviewer approves an
+# LLM-suggested keyword. Merged on top of POSITIVE_NAME_KEYWORDS in
+# pii_patterns.py at read time -- the base dictionary is never modified
+# by this file.
+
+EMAIL:
+- elektropost
